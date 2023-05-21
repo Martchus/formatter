@@ -23,24 +23,39 @@ fn handle_next_line(output: &mut dyn Write, line: String, args: &Cli) {
     let mut output_line = String::new();
     let mut has_last_word_end = false;
     let mut last_word_end: usize = 0;
-    for (i, c) in line.chars().enumerate() {
+
+    for c in line.chars() {
+        // handle the case when the current line is full
         if args.max_line_length != 0 && output_line.len() == args.max_line_length {
-            if has_last_word_end && ! args.break_words {
+            if args.break_words {
+                // print the output line we have so far and write further characters into a new/clear output line
+                write_line(output, &output_line, &args);
+                output_line.clear();
+            } else if has_last_word_end {
+                // print the output line we have so far but only until the last whitespace; keep further characters
+                // the output line for the next line
                 let output_line_until_last_whitespace: String = output_line.drain(..last_word_end + 1).collect();
                 write_line(output, &output_line_until_last_whitespace, &args);
             } else {
-                write_line(output, &output_line, &args);
+                // print the output line we have so far but without trailing newline
+                write!(output, "{}", output_line).unwrap();
                 output_line.clear();
             }
             has_last_word_end = false;
         }
+
+        // take note of word boundaries
         if c.is_whitespace() {
-            last_word_end = i;
+            last_word_end = output_line.len();
             has_last_word_end = true;
         }
+
+        // add the current character to current line
         output_line.push(c);
     }
-    write!(output, "{}\n", output_line).unwrap(); // fixme: carry over
+
+    // print what's left in the current output line
+    write!(output, "{}\n", output_line).unwrap();
 }
 
 fn read_lines(output: &mut dyn Write, input: &mut dyn BufRead, args: &Cli) {
@@ -73,7 +88,7 @@ mod tests {
         let mut result = Vec::new();
         output.seek(SeekFrom::Start(0)).unwrap();
         output.read_to_end(&mut result).unwrap();
-        assert_eq!(String::from_utf8(result).unwrap(), String::from_utf8(expected.to_vec()).unwrap());
+        assert_eq!(String::from_utf8(expected.to_vec()).unwrap(), String::from_utf8(result).unwrap());
     }
 
     #[test]
@@ -82,10 +97,19 @@ mod tests {
     }
 
     #[test]
-    fn test_line_wrapping() {
+    fn test_line_wrapping_with_word_breaks() {
+        test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: true, keep_trailing_whitespaces: false });
+        test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: true, keep_trailing_whitespaces: true });
+        test_read_lines(b"fo\no\nba\nr\nba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: true, keep_trailing_whitespaces: false });
+        test_read_lines(b"fo\no \nba\nr \nba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: true, keep_trailing_whitespaces: true });
+        test_read_lines(b"fooba\nr\nbaz\n", b"foobar\nbaz\n", &Cli{ max_line_length: 5, break_words: true, keep_trailing_whitespaces: false });
+    }
+
+    #[test]
+    fn test_line_wrapping_without_work_breaks() {
         test_read_lines(b"foo bar\nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: false, keep_trailing_whitespaces: false });
         test_read_lines(b"foo bar \nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: false, keep_trailing_whitespaces: true });
-        test_read_lines(b"fo\no b\nar\nba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: true, keep_trailing_whitespaces: false });
         test_read_lines(b"foo\nbar\nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: false, keep_trailing_whitespaces: false });
+        test_read_lines(b"foobar\nbaz\nt1 t2\n", b"foobar\nbaz t1 t2\n", &Cli{ max_line_length: 5, break_words: false, keep_trailing_whitespaces: false });
     }
 }
