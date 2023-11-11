@@ -11,11 +11,13 @@ struct Cli {
     keep_trailing_whitespaces: bool,
     #[arg(short, long, default_value_t = false)]
     preserve_list_indentation: bool,
+    #[arg(short, long, default_value_t = false)]
+    rewrap: bool,
 }
 
-struct LineState {
+struct LineState<'a> {
     current_char: char,
-    output_line: String,
+    output_line: &'a mut String,
     has_last_word_end: bool,
     has_word: bool,
     last_word_end: usize,
@@ -100,10 +102,24 @@ fn add_list_indentation(state: &mut LineState, list_found: bool, _args: &Cli) {
     }
 }
 
-fn handle_next_line(output: &mut dyn Write, line: String, args: &Cli) {
+fn is_new_paragraph_c(c: char) -> bool {
+    return c.is_control() || is_list_start(c);
+}
+
+fn is_new_paragraph(s: &String) -> bool {
+    for c in s.chars() {
+        if c.is_whitespace() {
+            continue;
+        }
+        return is_new_paragraph_c(c);
+    }
+    return true;
+}
+
+fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &mut String, args: &Cli) {
     let mut state = LineState{
         current_char: '\0',
-        output_line: String::new(),
+        output_line: output_line_,
         has_last_word_end: false,
         has_word: false,
         last_word_end: 0,
@@ -113,7 +129,20 @@ fn handle_next_line(output: &mut dyn Write, line: String, args: &Cli) {
         is_at_word_boundary: false,
     };
 
-    for c in line.chars() {
+    // flush previous line in rewrapping mode if the current line is a new paragraph/list-item
+    if args.rewrap && !state.output_line.is_empty() && is_new_paragraph(&input_line) {
+        write_line(output, &state.output_line, &args);
+        state.output_line.clear();
+    }
+
+    // insert a whitespace on underflow when rewrapping and trim input
+    let mut input_iter = input_line.chars();
+    if args.rewrap && !state.output_line.is_empty() {
+        state.output_line.push(' ');
+        input_iter = input_line.trim_start().chars();
+    }
+
+    for c in input_iter {
         state.current_char = c;
         state.is_at_word_boundary = c.is_whitespace();
 
@@ -133,13 +162,23 @@ fn handle_next_line(output: &mut dyn Write, line: String, args: &Cli) {
         add_list_indentation(&mut state, list_found, &args);
     }
 
-    // print what's left in the current output line
-    write_line(output, &state.output_line, &args);
+    // flush current output line
+    if !args.rewrap {
+        write_line(output, &state.output_line, &args);
+        state.output_line.clear();
+    }
 }
 
 fn read_lines(output: &mut dyn Write, input: &mut dyn BufRead, args: &Cli) {
+    // read input line-by-line and echo a formatted version of the input
+    let mut output_line = String::new();
     for line in input.lines() {
-        handle_next_line(output, line.unwrap(), &args);
+        handle_next_line(output, line.unwrap(), &mut output_line, &args);
+    }
+
+    // print the last output line
+    if args.rewrap {
+        write_line(output, &output_line, &args);
     }
 }
 
@@ -173,36 +212,43 @@ mod tests {
 
     #[test]
     fn test_simple_one_liner() {
-        test_read_lines(b"foo\n", b"foo\n", &Cli{ max_line_length: 0, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false });
+        test_read_lines(b"foo\n", b"foo\n", &Cli{ max_line_length: 0, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false });
     }
 
     #[test]
     fn test_line_wrapping_with_word_breaks() {
-        test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: true, keep_trailing_whitespaces: false, preserve_list_indentation: false });
-        test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false });
-        test_read_lines(b"fo\no\nba\nr\nba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: true, keep_trailing_whitespaces: false, preserve_list_indentation: false });
-        test_read_lines(b"fo\no \nba\nr \nba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false });
-        test_read_lines(b"fooba\nr\nbaz\n", b"foobar\nbaz\n", &Cli{ max_line_length: 5, break_words: true, keep_trailing_whitespaces: false, preserve_list_indentation: false });
+        test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: true, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
+        test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false });
+        test_read_lines(b"fo\no\nba\nr\nba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: true, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
+        test_read_lines(b"fo\no \nba\nr \nba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false });
+        test_read_lines(b"fooba\nr\nbaz\n", b"foobar\nbaz\n", &Cli{ max_line_length: 5, break_words: true, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
     }
 
     #[test]
     fn test_line_wrapping_without_work_breaks() {
-        test_read_lines(b"foo bar\nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false });
-        test_read_lines(b"foo bar \nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: false, keep_trailing_whitespaces: true, preserve_list_indentation: false });
-        test_read_lines(b"foo\nbar\nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false });
-        test_read_lines(b"foobar\nbaz\nt1 t2\n", b"foobar\nbaz t1 t2\n", &Cli{ max_line_length: 5, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false });
+        test_read_lines(b"foo bar\nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
+        test_read_lines(b"foo bar \nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: false, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false });
+        test_read_lines(b"foo\nbar\nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
+        test_read_lines(b"foobar\nbaz\nt1 t2\n", b"foobar\nbaz t1 t2\n", &Cli{ max_line_length: 5, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
     }
 
     #[test]
     fn test_list_handling_without_preserving_indentation() {
-        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &Cli{ max_line_length: 14, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false });
-        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &Cli{ max_line_length: 13, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false });
+        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &Cli{ max_line_length: 14, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
+        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &Cli{ max_line_length: 13, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
     }
 
     #[test]
     fn test_list_handling_with_preserving_indentation() {
-        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\n  test3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &Cli{ max_line_length: 13, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true });
-        test_read_lines(b"A list\nfollows:\n* foo bar baz\n  * test1\n    test2\n    test3\n    test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 13, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true });
-        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 15, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true });
+        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\n  test3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &Cli{ max_line_length: 13, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false });
+        test_read_lines(b"A list\nfollows:\n* foo bar baz\n  * test1\n    test2\n    test3\n    test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 13, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false });
+        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 15, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false });
+    }
+
+    #[test]
+    fn test_rewrapping() {
+        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 15, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true });
+        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list\nfollows:\n* foo\n  bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 15, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true });
+        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", b"A list\nfollows:\n* foo\n  bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 0, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true });
     }
 }
