@@ -2,16 +2,17 @@ use std::io::{BufRead, Write};
 use clap::Parser;
 
 #[derive(Parser)]
+#[command(author, version, about = "Formats the given input according to specified options", long_about = None)]
 struct Cli {
-    #[arg(short, long, default_value_t = 0)]
+    #[arg(short, long, default_value_t = 0, help = "Break lines that exceed the specified number of characters; specify 0 for no line limit")]
     max_line_length: usize,
-    #[arg(short, long, default_value_t = false)]
+    #[arg(short, long, default_value_t = false, help = "Break words when breaking lines via --max-line-length")]
     break_words: bool,
-    #[arg(short, long, default_value_t = false)]
+    #[arg(short, long, default_value_t = false, help = "Keep trailing whitespaces")]
     keep_trailing_whitespaces: bool,
-    #[arg(short, long, default_value_t = false)]
+    #[arg(short, long, default_value_t = false, help = "Preserve list indentation when breaking lines via --max-line-length (does not fix existing list indentation)")]
     preserve_list_indentation: bool,
-    #[arg(short, long, default_value_t = false)]
+    #[arg(short, long, default_value_t = false, help = "Join lines that would otherwise be shorter than the maximum specified via --max-line-length")]
     rewrap: bool,
 }
 
