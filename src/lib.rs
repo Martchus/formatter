@@ -40,6 +40,11 @@ fn is_list_start(c: char) -> bool {
     return c == '*' || c == '-';
 }
 
+fn flush_output_line(output: &mut dyn Write, state: &mut LineState, args: &Cli) {
+    write_line(output, &state.output_line, &args);
+    state.output_line.clear();
+}
+
 fn handle_overflow(output: &mut dyn Write, state: &mut LineState, args: &Cli) -> bool {
     // skip if there is no overflow
     if args.max_line_length == 0 || state.output_line.len() < args.max_line_length {
@@ -109,10 +114,9 @@ fn is_new_paragraph_c(c: char) -> bool {
 
 fn is_new_paragraph(s: &String) -> bool {
     for c in s.chars() {
-        if c.is_whitespace() {
-            continue;
+        if !c.is_whitespace() {
+            return is_new_paragraph_c(c);
         }
-        return is_new_paragraph_c(c);
     }
     return true;
 }
@@ -132,8 +136,7 @@ fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &m
 
     // flush previous line in rewrapping mode if the current line is a new paragraph/list-item
     if args.rewrap && !state.output_line.is_empty() && is_new_paragraph(&input_line) {
-        write_line(output, &state.output_line, &args);
-        state.output_line.clear();
+        flush_output_line(output, &mut state, &args);
     }
 
     // insert a whitespace on underflow when rewrapping and trim input
@@ -165,8 +168,7 @@ fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &m
 
     // flush current output line
     if !args.rewrap {
-        write_line(output, &state.output_line, &args);
-        state.output_line.clear();
+        flush_output_line(output, &mut state, &args);
     }
 }
 
@@ -184,8 +186,7 @@ fn read_lines(output: &mut dyn Write, input: &mut dyn BufRead, args: &Cli) {
 }
 
 pub fn run(output: &mut dyn Write, input: &mut dyn BufRead) {
-    let args = Cli::parse();
-    read_lines(output, input, &args);
+    read_lines(output, input, &Cli::parse());
 }
 
 #[cfg(test)]
