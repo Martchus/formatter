@@ -213,43 +213,55 @@ mod tests {
 
     #[test]
     fn test_simple_one_liner() {
-        test_read_lines(b"foo\n", b"foo\n", &Cli{ max_line_length: 0, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false });
+        let mk_args = ||
+            Cli{ max_line_length: 0, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false };
+        test_read_lines(b"foo\n", b"foo\n", &mk_args());
     }
 
     #[test]
     fn test_line_wrapping_with_word_breaks() {
-        test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: true, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
-        test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false });
-        test_read_lines(b"fo\no\nba\nr\nba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: true, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
-        test_read_lines(b"fo\no \nba\nr \nba\nz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false });
-        test_read_lines(b"fooba\nr\nbaz\n", b"foobar\nbaz\n", &Cli{ max_line_length: 5, break_words: true, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
+        let mk_args = |max_line_length_: usize, keep_trailing_whitespaces_: bool|
+            Cli{ max_line_length: max_line_length_, break_words: true, keep_trailing_whitespaces: keep_trailing_whitespaces_, preserve_list_indentation: false, rewrap: false };
+        test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &mk_args(10, false));
+        test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &mk_args(10, true));
+        test_read_lines(b"fo\no\nba\nr\nba\nz\n", b"foo bar baz\n", &mk_args(2, false));
+        test_read_lines(b"fo\no \nba\nr \nba\nz\n", b"foo bar baz\n", &mk_args(2, true));
+        test_read_lines(b"fooba\nr\nbaz\n", b"foobar\nbaz\n", &mk_args(5, false));
     }
 
     #[test]
     fn test_line_wrapping_without_work_breaks() {
-        test_read_lines(b"foo bar\nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
-        test_read_lines(b"foo bar \nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 10, break_words: false, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false });
-        test_read_lines(b"foo\nbar\nbaz\n", b"foo bar baz\n", &Cli{ max_line_length: 2, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
-        test_read_lines(b"foobar\nbaz\nt1 t2\n", b"foobar\nbaz t1 t2\n", &Cli{ max_line_length: 5, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
+        let mk_args = |max_line_length_: usize, keep_trailing_whitespaces_: bool|
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: keep_trailing_whitespaces_, preserve_list_indentation: false, rewrap: false };
+        test_read_lines(b"foo bar\nbaz\n", b"foo bar baz\n", &mk_args(10, false));
+        test_read_lines(b"foo bar \nbaz\n", b"foo bar baz\n", &mk_args(10, true));
+        test_read_lines(b"foo\nbar\nbaz\n", b"foo bar baz\n", &mk_args(2, false));
+        test_read_lines(b"foobar\nbaz\nt1 t2\n", b"foobar\nbaz t1 t2\n", &mk_args(5, false));
     }
 
     #[test]
     fn test_list_handling_without_preserving_indentation() {
-        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &Cli{ max_line_length: 14, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
-        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &Cli{ max_line_length: 13, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false });
+        let mk_args = |max_line_length_: usize|
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false };
+        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &mk_args(14));
+        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &mk_args(13));
     }
 
     #[test]
     fn test_list_handling_with_preserving_indentation() {
-        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\n  test3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &Cli{ max_line_length: 13, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false });
-        test_read_lines(b"A list\nfollows:\n* foo bar baz\n  * test1\n    test2\n    test3\n    test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 13, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false });
-        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 15, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false });
+        let mk_args = |max_line_length_: usize|
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false };
+        test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\n  test3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &mk_args(13));
+        test_read_lines(b"A list\nfollows:\n* foo bar baz\n  * test1\n    test2\n    test3\n    test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &mk_args(13));
+        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &mk_args(15));
     }
 
     #[test]
     fn test_rewrapping() {
-        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 15, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true });
-        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list\nfollows:\n* foo\n  bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 15, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true });
-        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", b"A list\nfollows:\n* foo\n  bar baz\n  * test1 test2 test3 test4\n", &Cli{ max_line_length: 0, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true });
+        let mk_args = |max_line_length_: usize|
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true };
+        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &mk_args(15));
+        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list\nfollows:\n* foo\n  bar baz\n  * test1 test2 test3 test4\n", &mk_args(15));
+        test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", b"A list\nfollows:\n* foo\n  bar baz\n  * test1 test2 test3 test4\n", &mk_args(0));
     }
 }
