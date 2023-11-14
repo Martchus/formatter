@@ -1,4 +1,5 @@
-use std::io::{BufRead, Write};
+use std::io::{BufRead, BufReader, Write};
+use std::fs::File;
 use clap::Parser;
 
 #[derive(Parser)]
@@ -14,6 +15,8 @@ struct Cli {
     preserve_list_indentation: bool,
     #[arg(short, long, default_value_t = false, help = "Join lines that would otherwise be shorter than the maximum specified via --max-line-length")]
     rewrap: bool,
+    #[arg(help = "Specifies files to read the input from (instead of stdin)")]
+    input_files: Vec<String>,
 }
 
 struct LineState<'a> {
@@ -172,21 +175,42 @@ fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &m
     }
 }
 
-fn read_lines(output: &mut dyn Write, input: &mut dyn BufRead, args: &Cli) {
+fn read_lines<R: BufRead>(output: &mut dyn Write, input: R, output_line: &mut String, args: &Cli) {
+    for line in input.lines() {
+        handle_next_line(output, line.unwrap(), output_line, &args);
+    }
+}
+
+fn read_lines_from_input_or_files(output: &mut dyn Write, input: &mut dyn BufRead, args: &Cli) -> i32 {
     // read input line-by-line and echo a formatted version of the input
     let mut output_line = String::new();
-    for line in input.lines() {
-        handle_next_line(output, line.unwrap(), &mut output_line, &args);
+    let mut exit_code: i32 = 0;
+    if args.input_files.is_empty() {
+        read_lines(output, input, &mut output_line, &args);
+    } else {
+        for input_file_path in &args.input_files {
+            let mut input_file_reader = match File::open(input_file_path) {
+                Ok(input_file) => BufReader::new(input_file),
+                Err(error) => {
+                    eprintln!("Unable to open \"{}\": {}", input_file_path, error);
+                    exit_code = 1;
+                    continue;
+                }
+            };
+            read_lines(output, &mut input_file_reader, &mut output_line, &args);
+        }
     }
 
     // print the last output line
     if args.rewrap {
         write_line(output, &output_line, &args);
     }
+
+    return exit_code;
 }
 
-pub fn run(output: &mut dyn Write, input: &mut dyn BufRead) {
-    read_lines(output, input, &Cli::parse());
+pub fn run(output: &mut dyn Write, input: &mut dyn BufRead) -> i32 {
+    return read_lines_from_input_or_files(output, input, &Cli::parse());
 }
 
 #[cfg(test)]
@@ -203,7 +227,7 @@ mod tests {
         input.seek(SeekFrom::Start(0)).unwrap();
 
         // read the test data
-        read_lines(&mut output, &mut input, &args);
+        read_lines_from_input_or_files(&mut output, &mut input, &args);
 
         // check the output
         let mut result = Vec::new();
@@ -215,14 +239,14 @@ mod tests {
     #[test]
     fn test_simple_one_liner() {
         let mk_args = ||
-            Cli{ max_line_length: 0, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false };
+            Cli{ max_line_length: 0, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false, input_files: Vec::new() };
         test_read_lines(b"foo\n", b"foo\n", &mk_args());
     }
 
     #[test]
     fn test_line_wrapping_with_word_breaks() {
         let mk_args = |max_line_length_: usize, keep_trailing_whitespaces_: bool|
-            Cli{ max_line_length: max_line_length_, break_words: true, keep_trailing_whitespaces: keep_trailing_whitespaces_, preserve_list_indentation: false, rewrap: false };
+            Cli{ max_line_length: max_line_length_, break_words: true, keep_trailing_whitespaces: keep_trailing_whitespaces_, preserve_list_indentation: false, rewrap: false, input_files: Vec::new() };
         test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &mk_args(10, false));
         test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &mk_args(10, true));
         test_read_lines(b"fo\no\nba\nr\nba\nz\n", b"foo bar baz\n", &mk_args(2, false));
@@ -233,7 +257,7 @@ mod tests {
     #[test]
     fn test_line_wrapping_without_work_breaks() {
         let mk_args = |max_line_length_: usize, keep_trailing_whitespaces_: bool|
-            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: keep_trailing_whitespaces_, preserve_list_indentation: false, rewrap: false };
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: keep_trailing_whitespaces_, preserve_list_indentation: false, rewrap: false, input_files: Vec::new() };
         test_read_lines(b"foo bar\nbaz\n", b"foo bar baz\n", &mk_args(10, false));
         test_read_lines(b"foo bar \nbaz\n", b"foo bar baz\n", &mk_args(10, true));
         test_read_lines(b"foo\nbar\nbaz\n", b"foo bar baz\n", &mk_args(2, false));
@@ -243,7 +267,7 @@ mod tests {
     #[test]
     fn test_list_handling_without_preserving_indentation() {
         let mk_args = |max_line_length_: usize|
-            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false };
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false, input_files: Vec::new() };
         test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &mk_args(14));
         test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &mk_args(13));
     }
@@ -251,7 +275,7 @@ mod tests {
     #[test]
     fn test_list_handling_with_preserving_indentation() {
         let mk_args = |max_line_length_: usize|
-            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false };
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false, input_files: Vec::new() };
         test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\n  test3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &mk_args(13));
         test_read_lines(b"A list\nfollows:\n* foo bar baz\n  * test1\n    test2\n    test3\n    test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &mk_args(13));
         test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &mk_args(15));
@@ -260,9 +284,17 @@ mod tests {
     #[test]
     fn test_rewrapping() {
         let mk_args = |max_line_length_: usize|
-            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true };
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true, input_files: Vec::new() };
         test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &mk_args(15));
         test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list\nfollows:\n* foo\n  bar baz\n  * test1 test2 test3 test4\n", &mk_args(15));
         test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", b"A list\nfollows:\n* foo\n  bar baz\n  * test1 test2 test3 test4\n", &mk_args(0));
+    }
+
+    #[test]
+    fn test_reading_input_files() {
+        let input_file_paths = Vec::from([String::from("testfiles/testinput1"), String::from("testfiles/testinput2")]);
+        let mk_args = |max_line_length_: usize|
+        Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true, input_files: input_file_paths };
+        test_read_lines(b"foo bar 1 2 3 4\n5 6 7 8 9 10 11\n12\n", b"", &mk_args(15));
     }
 }
