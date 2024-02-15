@@ -8,6 +8,6 @@ I mainly created this program to learn the Rust programming language. So at
 this point it is probably fairly incomplete and buggy.
 
 ## Copyright notice and license
-Copyright © 2023 Marius Kittler
+Copyright © 2023-2024 Marius Kittler
 
 All code is licensed under [GPL-2-or-later](LICENSE).
