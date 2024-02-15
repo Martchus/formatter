@@ -1,6 +1,8 @@
 use std::io::{BufRead, BufReader, Write};
 use std::fs::File;
 use clap::Parser;
+use itertools::{Itertools,EitherOrBoth::*};
+use regex::Regex;
 
 #[derive(Parser)]
 #[command(author, version, about = "Formats the given input according to specified options", long_about = None)]
@@ -15,6 +17,10 @@ struct Cli {
     preserve_list_indentation: bool,
     #[arg(short, long, default_value_t = false, help = "Join lines that would otherwise be shorter than the maximum specified via --max-line-length")]
     rewrap: bool,
+    #[arg(short, long, help = "Matches each line against the specified regex and substitutes matches with the specified --replacement")]
+    substitute_regex: Vec<String>,
+    #[arg(long, help = "Replacement for --substitute-regex, see https://docs.rs/regex/latest/regex/struct.Regex.html#replacement-string-syntax")]
+    replacement: Vec<String>,
     #[arg(help = "Specifies files to read the input from (instead of stdin)")]
     input_files: Vec<String>,
 }
@@ -124,7 +130,7 @@ fn is_new_paragraph(s: &String) -> bool {
     return true;
 }
 
-fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &mut String, args: &Cli) {
+fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &mut String, args: &Cli, substitute_regex: &Vec<Regex>) {
     let mut state = LineState{
         current_char: '\0',
         output_line: output_line_,
@@ -142,11 +148,21 @@ fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &m
         flush_output_line(output, &mut state, &args);
     }
 
+    // apply substitute_regex
+    let mut substituted_line = input_line.to_string(); // FIXME: avoid this copy
+    for pair in substitute_regex.iter().zip_longest(&args.replacement) {
+        substituted_line = match pair {
+            Both(regex, replacement) => String::from(regex.replace(&substituted_line, replacement)),
+            Left(regex) => String::from(regex.replace(&substituted_line, "")),
+            Right(_) => substituted_line, // FIXME: avoid this copy (or is this a copy?)
+        };
+    }
+
     // insert a whitespace on underflow when rewrapping and trim input
-    let mut input_iter = input_line.chars();
+    let mut input_iter = substituted_line.chars();
     if args.rewrap && !state.output_line.is_empty() {
         state.output_line.push(' ');
-        input_iter = input_line.trim_start().chars();
+        input_iter = substituted_line.trim_start().chars();
     }
 
     for c in input_iter {
@@ -175,18 +191,32 @@ fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &m
     }
 }
 
-fn read_lines<R: BufRead>(output: &mut dyn Write, input: R, output_line: &mut String, args: &Cli) {
+fn read_lines<R: BufRead>(output: &mut dyn Write, input: R, output_line: &mut String, args: &Cli, substitute_regex: &Vec<Regex>) {
     for line in input.lines() {
-        handle_next_line(output, line.unwrap(), output_line, &args);
+        handle_next_line(output, line.unwrap(), output_line, &args, &substitute_regex);
     }
 }
 
 fn read_lines_from_input_or_files(output: &mut dyn Write, input: &mut dyn BufRead, args: &Cli) -> i32 {
+    // parse regex for substitution
+    let mut substitute_regex = Vec::new();
+    for regex in &args.substitute_regex {
+        match Regex::new(&regex) {
+            Ok(regex) => {
+                substitute_regex.push(regex);
+            }
+            Err(error) => {
+                eprintln!("Unable parse specified regex \"{}\": {}", regex, error);
+                return 1;
+            }
+        };
+    }
+
     // read input line-by-line and echo a formatted version of the input
-    let mut output_line = String::new();
     let mut exit_code: i32 = 0;
+    let mut output_line = String::new();
     if args.input_files.is_empty() {
-        read_lines(output, input, &mut output_line, &args);
+        read_lines(output, input, &mut output_line, &args, &substitute_regex);
     } else {
         for input_file_path in &args.input_files {
             let mut input_file_reader = match File::open(input_file_path) {
@@ -197,7 +227,7 @@ fn read_lines_from_input_or_files(output: &mut dyn Write, input: &mut dyn BufRea
                     continue;
                 }
             };
-            read_lines(output, &mut input_file_reader, &mut output_line, &args);
+            read_lines(output, &mut input_file_reader, &mut output_line, &args, &substitute_regex);
         }
     }
 
@@ -239,14 +269,14 @@ mod tests {
     #[test]
     fn test_simple_one_liner() {
         let mk_args = ||
-            Cli{ max_line_length: 0, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false, input_files: Vec::new() };
+            Cli{ max_line_length: 0, break_words: true, keep_trailing_whitespaces: true, preserve_list_indentation: false, rewrap: false, substitute_regex: Vec::new(), replacement: Vec::new(), input_files: Vec::new() };
         test_read_lines(b"foo\n", b"foo\n", &mk_args());
     }
 
     #[test]
     fn test_line_wrapping_with_word_breaks() {
         let mk_args = |max_line_length_: usize, keep_trailing_whitespaces_: bool|
-            Cli{ max_line_length: max_line_length_, break_words: true, keep_trailing_whitespaces: keep_trailing_whitespaces_, preserve_list_indentation: false, rewrap: false, input_files: Vec::new() };
+            Cli{ max_line_length: max_line_length_, break_words: true, keep_trailing_whitespaces: keep_trailing_whitespaces_, preserve_list_indentation: false, rewrap: false, substitute_regex: Vec::new(), replacement: Vec::new(), input_files: Vec::new() };
         test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &mk_args(10, false));
         test_read_lines(b"foo bar ba\nz\n", b"foo bar baz\n", &mk_args(10, true));
         test_read_lines(b"fo\no\nba\nr\nba\nz\n", b"foo bar baz\n", &mk_args(2, false));
@@ -257,7 +287,7 @@ mod tests {
     #[test]
     fn test_line_wrapping_without_work_breaks() {
         let mk_args = |max_line_length_: usize, keep_trailing_whitespaces_: bool|
-            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: keep_trailing_whitespaces_, preserve_list_indentation: false, rewrap: false, input_files: Vec::new() };
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: keep_trailing_whitespaces_, preserve_list_indentation: false, rewrap: false, substitute_regex: Vec::new(), replacement: Vec::new(), input_files: Vec::new() };
         test_read_lines(b"foo bar\nbaz\n", b"foo bar baz\n", &mk_args(10, false));
         test_read_lines(b"foo bar \nbaz\n", b"foo bar baz\n", &mk_args(10, true));
         test_read_lines(b"foo\nbar\nbaz\n", b"foo bar baz\n", &mk_args(2, false));
@@ -267,7 +297,7 @@ mod tests {
     #[test]
     fn test_list_handling_without_preserving_indentation() {
         let mk_args = |max_line_length_: usize|
-            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false, input_files: Vec::new() };
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: false, rewrap: false, substitute_regex: Vec::new(), replacement: Vec::new(), input_files: Vec::new() };
         test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &mk_args(14));
         test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\ntest3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &mk_args(13));
     }
@@ -275,7 +305,7 @@ mod tests {
     #[test]
     fn test_list_handling_with_preserving_indentation() {
         let mk_args = |max_line_length_: usize|
-            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false, input_files: Vec::new() };
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false, substitute_regex: Vec::new(), replacement: Vec::new(), input_files: Vec::new() };
         test_read_lines(b"A list\nfollows:\n* foo bar baz\n* test1 test2\n  test3 test4\n", b"A list follows:\n* foo bar baz\n* test1 test2 test3 test4\n", &mk_args(13));
         test_read_lines(b"A list\nfollows:\n* foo bar baz\n  * test1\n    test2\n    test3\n    test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &mk_args(13));
         test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &mk_args(15));
@@ -284,7 +314,7 @@ mod tests {
     #[test]
     fn test_rewrapping() {
         let mk_args = |max_line_length_: usize|
-            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true, input_files: Vec::new() };
+            Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true, substitute_regex: Vec::new(), replacement: Vec::new(), input_files: Vec::new() };
         test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", &mk_args(15));
         test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2\n    test3 test4\n", b"A list\nfollows:\n* foo\n  bar baz\n  * test1 test2 test3 test4\n", &mk_args(15));
         test_read_lines(b"A list follows:\n* foo bar baz\n  * test1 test2 test3 test4\n", b"A list\nfollows:\n* foo\n  bar baz\n  * test1 test2 test3 test4\n", &mk_args(0));
@@ -294,7 +324,7 @@ mod tests {
     fn test_reading_input_files() {
         let input_file_paths = Vec::from([String::from("testfiles/testinput1"), String::from("testfiles/testinput2")]);
         let mk_args = |max_line_length_: usize|
-        Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true, input_files: input_file_paths };
+        Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true, substitute_regex: Vec::new(), replacement: Vec::new(), input_files: input_file_paths };
         test_read_lines(b"foo bar 1 2 3 4\n5 6 7 8 9 10 11\n12\n", b"", &mk_args(15));
     }
 }
