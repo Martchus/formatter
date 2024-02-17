@@ -327,4 +327,11 @@ mod tests {
         Cli{ max_line_length: max_line_length_, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: true, substitute_regex: Vec::new(), replacement: Vec::new(), input_files: input_file_paths };
         test_read_lines(b"foo bar 1 2 3 4\n5 6 7 8 9 10 11\n12\n", b"", &mk_args(15));
     }
+
+    #[test]
+    fn test_substitution() {
+        let mk_args = |_substitute_regex: Vec<String>, _replacement: Vec<String>|
+        Cli{ max_line_length: 20, break_words: false, keep_trailing_whitespaces: false, preserve_list_indentation: true, rewrap: false, substitute_regex: _substitute_regex, replacement: _replacement, input_files: Vec::new() };
+        test_read_lines(b"f00bar\nf00baz\n", b"foobar\nfoobaz\n", &mk_args(vec!["oo".to_owned(), "remove".to_owned()], vec!["00".to_owned()]));
+    }
 }
