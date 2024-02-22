@@ -46,7 +46,7 @@ fn write_line(output: &mut dyn Write, line: &String, args: &Cli) {
 }
 
 fn is_list_start(c: char) -> bool {
-    return c == '*' || c == '-';
+    c == '*' || c == '-'
 }
 
 fn flush_output_line(output: &mut dyn Write, state: &mut LineState, args: &Cli) {
@@ -84,7 +84,7 @@ fn handle_overflow(output: &mut dyn Write, state: &mut LineState, args: &Cli) ->
         return true;
     }
 
-    return false;
+    false
 }
 
 fn handle_list(state: &mut LineState, args: &Cli) -> bool {
@@ -95,7 +95,7 @@ fn handle_list(state: &mut LineState, args: &Cli) -> bool {
         state.list_indentation.push(' ');
         state.list_padding_end = false;
     }
-    return list_found;
+    list_found
 }
 
 fn handle_word_boundary(state: &mut LineState, _args: &Cli) {
@@ -118,7 +118,7 @@ fn add_list_indentation(state: &mut LineState, list_found: bool, _args: &Cli) {
 }
 
 fn is_new_paragraph_c(c: char) -> bool {
-    return c.is_control() || is_list_start(c);
+    c.is_control() || is_list_start(c)
 }
 
 fn is_new_paragraph(s: &String) -> bool {
@@ -127,7 +127,7 @@ fn is_new_paragraph(s: &String) -> bool {
             return is_new_paragraph_c(c);
         }
     }
-    return true;
+    true
 }
 
 fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &mut String, args: &Cli, substitute_regex: &Vec<Regex>) {
@@ -236,11 +236,11 @@ fn read_lines_from_input_or_files(output: &mut dyn Write, input: &mut dyn BufRea
         write_line(output, &output_line, &args);
     }
 
-    return exit_code;
+    exit_code
 }
 
 pub fn run(output: &mut dyn Write, input: &mut dyn BufRead) -> i32 {
-    return read_lines_from_input_or_files(output, input, &Cli::parse());
+    read_lines_from_input_or_files(output, input, &Cli::parse())
 }
 
 #[cfg(test)]
