@@ -130,7 +130,7 @@ fn is_new_paragraph(s: &String) -> bool {
     true
 }
 
-fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &mut String, args: &Cli, substitute_regex: &Vec<Regex>) {
+fn handle_next_line<'a>(output: &mut dyn Write, mut input_line: &'a mut String, output_line_: &mut String, args: &Cli, substitute_regex: &Vec<Regex>) {
     let mut state = LineState{
         current_char: '\0',
         output_line: output_line_,
@@ -149,12 +149,12 @@ fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &m
     }
 
     // apply substitute_regex
-    let mut substituted_line = input_line.to_string(); // FIXME: avoid this copy
+    let substituted_line: &mut String = &mut input_line;
     for pair in substitute_regex.iter().zip_longest(&args.replacement) {
-        substituted_line = match pair {
-            Both(regex, replacement) => String::from(regex.replace(&substituted_line, replacement)),
-            Left(regex) => String::from(regex.replace(&substituted_line, "")),
-            Right(_) => substituted_line, // FIXME: avoid this copy (or is this a copy?)
+        match pair {
+            Both(regex, replacement) => { *substituted_line = String::from(regex.replace(&substituted_line, replacement)); },
+            Left(regex) => { *substituted_line = String::from(regex.replace(&substituted_line, "")); },
+            Right(_) => {},
         };
     }
 
@@ -193,7 +193,7 @@ fn handle_next_line(output: &mut dyn Write, input_line: String, output_line_: &m
 
 fn read_lines<R: BufRead>(output: &mut dyn Write, input: R, output_line: &mut String, args: &Cli, substitute_regex: &Vec<Regex>) {
     for line in input.lines() {
-        handle_next_line(output, line.unwrap(), output_line, &args, &substitute_regex);
+        handle_next_line(output, &mut line.unwrap(), output_line, &args, &substitute_regex);
     }
 }
 
